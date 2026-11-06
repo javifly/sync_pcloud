@@ -114,12 +114,14 @@ Al final repite la comparación y, si todo coincide, escribe `VERIFICADO: nube y
 
 | Comando | Qué hace |
 |---|---|
-| `sync_pcloud.bat` | Sincroniza y espera una tecla al final. |
+| `sync_pcloud.bat` | Sincroniza. Si todo va bien, la ventana se cierra sola tras 60 s; si hay errores, se queda abierta. |
 | `sync_pcloud.bat --simular` | Solo muestra lo que haría, sin tocar la nube. |
 | `sync_pcloud.bat --auto` | Sin preguntas ni pausa (para automatizar). |
 | `sync_pcloud.bat --comparar tamano` / `sha1` | Ignora `comparar` del `config.ini` solo en esa ejecución. |
 
 Se pueden combinar: `sync_pcloud.bat --auto --comparar sha1`.
+
+Al terminar sin `--auto`, la ventana hace una cuenta atrás y se cierra sola si todo fue bien (60 s, `ESPERA_OK`) o si ya había otra ejecución en marcha (10 s, `ESPERA_OCUPADO`). Pulsar una tecla la cierra antes. Si hubo cualquier error, se queda abierta hasta pulsar una tecla, para poder leerlo. Los segundos se cambian al principio de `sync_pcloud.bat`.
 
 ### Programador de tareas de Windows (por ejemplo, cada hora)
 

@@ -12,11 +12,20 @@ rem
 rem  Codigos de salida: 0 ok | 1 errores en ficheros | 2 config/red
 rem    3 abortado por seguridad | 4 ya habia otra ejecucion en marcha
 rem    5 hay que iniciar sesion (ejecutalo a mano sin --auto)
-rem  Con codigo 4 la ventana se cierra sola tras 10 segundos.
+rem
+rem  Al terminar (sin --auto):
+rem    codigo 0  -> cuenta atras de ESPERA_OK segundos y la ventana se cierra
+rem    codigo 4  -> cuenta atras de ESPERA_OCUPADO segundos y se cierra
+rem    errores   -> la ventana se queda abierta hasta pulsar una tecla
+rem  Pulsar una tecla durante la cuenta atras cierra antes.
 rem =====================================================================
 chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
+
+rem --- Segundos de cuenta atras antes de cerrar la ventana --------------
+set "ESPERA_OK=60"
+set "ESPERA_OCUPADO=10"
 
 set "PAUSA=1"
 for %%A in (%*) do if /i "%%~A"=="--auto" set "PAUSA=0"
@@ -71,14 +80,23 @@ set "RC=%ERRORLEVEL%"
 
 :fin
 if not "%PAUSA%"=="1" goto :salir
-rem Codigo 4 = ya habia otra ejecucion en marcha: no hay nada que leer,
-rem cuenta atras de 10 s y la ventana se cierra sola (o pulsa una tecla).
-if "%RC%"=="4" (
+rem Todo correcto: cuenta atras y se cierra sola (o pulsa una tecla).
+if "%RC%"=="0" (
     echo.
-    echo Esta ventana se cerrara sola en 10 segundos.
-    timeout /t 10
+    echo Todo correcto. Esta ventana se cerrara sola en %ESPERA_OK% segundos.
+    timeout /t %ESPERA_OK%
     goto :salir
 )
+rem Codigo 4 = ya habia otra ejecucion en marcha: no hay nada que leer.
+if "%RC%"=="4" (
+    echo.
+    echo Esta ventana se cerrara sola en %ESPERA_OCUPADO% segundos.
+    timeout /t %ESPERA_OCUPADO%
+    goto :salir
+)
+rem Cualquier error: la ventana se queda abierta para poder leerlo.
+echo.
+echo Ha terminado con codigo %RC% (ver arriba o en sync_pcloud.log).
 pause
 :salir
 exit /b %RC%
