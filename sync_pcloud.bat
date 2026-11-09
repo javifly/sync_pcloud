@@ -13,18 +13,18 @@ rem  Codigos de salida: 0 ok | 1 errores en ficheros | 2 config/red
 rem    3 abortado por seguridad | 4 ya habia otra ejecucion en marcha
 rem    5 hay que iniciar sesion (ejecutalo a mano sin --auto)
 rem
-rem  Al terminar (sin --auto):
-rem    codigo 0  -> cuenta atras de ESPERA_OK segundos y la ventana se cierra
-rem    codigo 4  -> cuenta atras de ESPERA_OCUPADO segundos y se cierra
-rem    errores   -> la ventana se queda abierta hasta pulsar una tecla
-rem  Pulsar una tecla durante la cuenta atras cierra antes.
+rem  Al terminar (sin --auto) la ventana NUNCA se queda abierta:
+rem    codigo 4      -> cuenta atras de ESPERA_OCUPADO segundos y se cierra
+rem    cualquier otro (bien o con errores) -> cuenta atras de ESPERA segundos
+rem  Pulsar una tecla durante la cuenta atras cierra antes. Los errores
+rem  quedan siempre en sync_pcloud.log.
 rem =====================================================================
 chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 
 rem --- Segundos de cuenta atras antes de cerrar la ventana --------------
-set "ESPERA_OK=60"
+set "ESPERA=60"
 set "ESPERA_OCUPADO=10"
 
 set "PAUSA=1"
@@ -80,13 +80,6 @@ set "RC=%ERRORLEVEL%"
 
 :fin
 if not "%PAUSA%"=="1" goto :salir
-rem Todo correcto: cuenta atras y se cierra sola (o pulsa una tecla).
-if "%RC%"=="0" (
-    echo.
-    echo Todo correcto. Esta ventana se cerrara sola en %ESPERA_OK% segundos.
-    timeout /t %ESPERA_OK%
-    goto :salir
-)
 rem Codigo 4 = ya habia otra ejecucion en marcha: no hay nada que leer.
 if "%RC%"=="4" (
     echo.
@@ -94,10 +87,14 @@ if "%RC%"=="4" (
     timeout /t %ESPERA_OCUPADO%
     goto :salir
 )
-rem Cualquier error: la ventana se queda abierta para poder leerlo.
 echo.
-echo Ha terminado con codigo %RC% (ver arriba o en sync_pcloud.log).
-pause
+if "%RC%"=="0" (
+    echo Todo correcto. Esta ventana se cerrara sola en %ESPERA% segundos.
+) else (
+    echo Ha terminado con codigo %RC%: revisa lo de arriba o sync_pcloud.log.
+    echo Esta ventana se cerrara sola en %ESPERA% segundos.
+)
+timeout /t %ESPERA%
 :salir
 exit /b %RC%
 

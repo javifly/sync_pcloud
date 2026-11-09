@@ -976,18 +976,18 @@ def sincronizar(api, nombre, local_raiz, remota_raiz, opc, excluido, cache, simu
     if not os.path.isdir(local_raiz):
         log.error("La carpeta local NO existe o no está accesible: %s", local_raiz)
         log.error("Abortado (si fuera un disco desconectado, se borraría toda la nube).")
-        return 3, 0
+        return 3, 0, []
     remota_raiz = "/" + remota_raiz.strip().strip("/")
     if remota_raiz == "/":
         log.error("La ruta remota no puede ser la raíz '/' de pCloud. Abortado.")
-        return 2, 0
+        return 2, 0, []
 
     # ===================== [1/5] LOCAL ======================================
     fase(1, "LOCAL", "Leyendo la carpeta de tu PC")
     loc, ilegibles = escanear_local(ruta_larga_windows(local_raiz), excluido)
     if "" in ilegibles:
         log.error("No se puede leer la carpeta raíz local. Abortado.")
-        return 3, 0
+        return 3, 0, []
     n_loc = sum(1 for v in loc.values() if not v["dir"])
     log.info("%s→ %d ficheros, %d carpetas, %s", SANGRIA, n_loc, len(loc) - n_loc,
              legible(sum(v.get("size", 0) for v in loc.values())))
@@ -1031,8 +1031,14 @@ def sincronizar(api, nombre, local_raiz, remota_raiz, opc, excluido, cache, simu
 
     subir, iguales_tam = [], []
     n_nuevos = n_tam = 0
+    # Ficheros modificados hace muy poco: probablemente se están escribiendo
+    # (p. ej. una copia del NAS en curso). Se dejan para la próxima ejecución.
+    limite_reciente = time.time() - opc["recientes_min"] * 60
+    recientes = sorted(rel for rel, l in loc.items()
+                       if not l["dir"] and opc["recientes_min"] > 0 and l["mtime"] > limite_reciente)
+    pendientes = list(recientes)       # en uso o recientes: no son error
     for rel, l in loc.items():
-        if l["dir"]:
+        if l["dir"] or rel in recientes:
             continue
         r = rem.get(rel)
         if r is None or r["dir"] or rel in borrar_set:
@@ -1054,6 +1060,12 @@ def sincronizar(api, nombre, local_raiz, remota_raiz, opc, excluido, cache, simu
              "  → se subirán" if n_nuevos else "")
     log.info("%s%s %4d%s", SANGRIA, puntos("· Solo en la nube"), len(borrar),
              "  → se borrarán de la nube" if borrar else "")
+    if recientes:
+        log.info("%s%s %4d  → se dejan para la próxima ejecución", SANGRIA,
+                 puntos(f"· Modificados hace < {opc['recientes_min']:g} min"), len(recientes))
+        for rel in recientes:
+            log.info("%s    %s  (modificado %s: puede que aún se esté escribiendo)", SANGRIA, rel,
+                     time.strftime("%H:%M:%S", time.localtime(loc[rel]["mtime"])))
 
     clave_l = f"{local_raiz}|{remota_raiz}"
     c_loc = cache["local"].setdefault(clave_l, {})
@@ -1123,6 +1135,11 @@ def sincronizar(api, nombre, local_raiz, remota_raiz, opc, excluido, cache, simu
                 else:
                     try:
                         sl = sha1_fichero(l["full"], progreso=aviso)
+                    except PermissionError:
+                        log.warning("%sLOCAL > %s está EN USO por otro programa: se deja para la "
+                                    "próxima ejecución", SANGRIA, rel)
+                        pendientes.append(rel)
+                        continue
                     except OSError as e:
                         log.error("%sLOCAL > no se puede leer %s (%s)", SANGRIA, rel, e)
                         continue
@@ -1149,8 +1166,10 @@ def sincronizar(api, nombre, local_raiz, remota_raiz, opc, excluido, cache, simu
                     t_guardado = time.time()
                     opc["guardar_cache"]()   # si se corta, no se pierde lo ya calculado
         n_dist = sum(1 for _, m in subir if m.startswith("mismo tamaño"))
-        log.info("%sResultado SHA-1: %d idénticos, %d distintos", SANGRIA,
-                 len(iguales_tam) - n_dist, n_dist)
+        n_uso = sum(1 for rel in iguales_tam if rel in pendientes)
+        log.info("%sResultado SHA-1: %d idénticos, %d distintos%s", SANGRIA,
+                 len(iguales_tam) - n_dist - n_uso, n_dist,
+                 f", {n_uso} en uso (sin comprobar)" if n_uso else "")
     for k in list(c_loc):
         if k not in loc:
             del c_loc[k]
@@ -1162,8 +1181,12 @@ def sincronizar(api, nombre, local_raiz, remota_raiz, opc, excluido, cache, simu
     # ===================== [4/5] PLAN =======================================
     fase(4, "PLAN", "Qué hay que hacer")
     if not acciones:
-        log.info("%sNada: la nube ya es una copia exacta de la carpeta local.", SANGRIA)
-        return 0, 0
+        if pendientes:
+            log.info("%sNada más: la nube ya coincide con la carpeta local, salvo %d fichero(s) "
+                     "pendiente(s) que se revisarán en la próxima ejecución.", SANGRIA, len(pendientes))
+        else:
+            log.info("%sNada: la nube ya es una copia exacta de la carpeta local.", SANGRIA)
+        return 0, 0, pendientes
     log.info("%s%s %d elemento(s), %d fichero(s)", SANGRIA, puntos("NUBE         > borrar", 30),
              len(borrar), n_borrados)
     log.info("%s%s %d", SANGRIA, puntos("NUBE         > crear carpetas", 30), len(crear))
@@ -1182,12 +1205,12 @@ def sincronizar(api, nombre, local_raiz, remota_raiz, opc, excluido, cache, simu
         log.error("Se borrarían %d ficheros en la nube y el límite es max_borrados = %d.",
                   n_borrados, opc["max_borrados"])
         log.error("Abortado sin tocar nada. Revisa con --simular y sube el límite si es correcto.")
-        return 3, 0
+        return 3, 0, []
 
     if simular:
         log.info("")
         log.info("%s(SIMULACIÓN: no se ha tocado nada en la nube)", SANGRIA)
-        return 0, acciones
+        return 0, acciones, pendientes
 
     # ===================== [5/5] EJECUTAR ===================================
     fase(5, "EJECUTAR", "Aplicando el plan")
@@ -1295,6 +1318,12 @@ def sincronizar(api, nombre, local_raiz, remota_raiz, opc, excluido, cache, simu
                 try:
                     meta, sha_env, enviados = api.subir(ids[padre], nombre_f, l["full"],
                                                         l["mtime"], progreso=progreso)
+                except PermissionError:
+                    # Windows no deja leerlo: otro programa lo tiene abierto
+                    # (p. ej. la copia del NAS aún se está escribiendo).
+                    log.warning("%s %s está EN USO por otro programa: no se sube ahora, se "
+                                "intentará en la próxima ejecución", etiqueta, rel)
+                    return "en_uso"
                 except Exception as e:  # noqa
                     log.error("%s ERROR subiendo %s: %s", etiqueta, rel, e)
                     return False
@@ -1353,12 +1382,17 @@ def sincronizar(api, nombre, local_raiz, remota_raiz, opc, excluido, cache, simu
     with ThreadPoolExecutor(max_workers=opc["paralelas"]) as pool:
         resultados = list(pool.map(lambda a: subir_uno(*a),
                                    [(n, rel, m) for n, (rel, m) in enumerate(subir, 1)]))
-    errores += resultados.count(False)
+    errores += sum(1 for r in resultados if r is False)
+    en_uso = [rel for (rel, _), r in zip(subir, resultados) if r == "en_uso"]
+    pendientes += en_uso
 
     log.info("")
-    log.info("%sPasada terminada en %s. Subido %s. Errores: %d", SANGRIA,
-             duracion(time.time() - t0), legible(panel["hechos_bytes"]), errores)
-    return (1 if errores else 0), acciones
+    log.info("%sPasada terminada en %s. Subido %s. Errores: %d%s", SANGRIA,
+             duracion(time.time() - t0), legible(panel["hechos_bytes"]), errores,
+             f". Pendientes (en uso o recientes): {len(pendientes)}" if pendientes else "")
+    # Los ficheros en uso no cuentan como "cambios pendientes de esta pasada":
+    # repetir la pasada no los va a liberar.
+    return (1 if errores else 0), acciones - len(en_uso), pendientes
 
 
 # =========================================================================== #
@@ -1405,6 +1439,7 @@ def main():
             "paralelas": max(1, int(o.get("subidas_paralelas", "1"))),
             "verificar": si(o.get("verificar_subidas", "si")),
             "intentos_verificacion": max(1, int(o.get("intentos_por_fichero", "3"))),
+            "recientes_min": max(0.0, float(o.get("ignorar_recientes_min", "60"))),
             "pasadas": max(1, int(o.get("pasadas_maximas", "3"))),
         }
     except ValueError as e:
@@ -1519,7 +1554,7 @@ def _ejecutar(args, cfg, ruta_config, base, opc, simular, o):
     try:
         for nombre, sec in trabajos:
             local, remota = sec.get("local", "").strip(), sec.get("remota", "").strip()
-            rc, acciones, t_job = 0, 0, time.time()
+            rc, acciones, pend, t_job = 0, 0, [], time.time()
             for pasada in range(1, max_pasadas + 1):
                 log.info("")
                 log.info("=" * 74)
@@ -1529,15 +1564,19 @@ def _ejecutar(args, cfg, ruta_config, base, opc, simular, o):
                 log.info("NUBE:  pCloud:%s", remota)
                 log.info("=" * 74)
                 try:
-                    rc, acciones = sincronizar(api, nombre, local, remota, opc, excluido, cache, simular)
+                    rc, acciones, pend = sincronizar(api, nombre, local, remota, opc, excluido,
+                                                     cache, simular)
                 except Exception as e:  # noqa
                     log.exception("[%s] Error inesperado: %s", nombre, e)
-                    rc, acciones = 2, -1
+                    rc, acciones, pend = 2, -1, []
                 if rc in (2, 3) or simular:
                     break
                 if acciones == 0:
-                    if pasada > 1:
+                    if pasada > 1 and not pend:
                         log.info("[%s] VERIFICADO: nube y local son idénticos.", nombre)
+                    elif pend:
+                        log.info("[%s] VERIFICADO, salvo %d fichero(s) pendiente(s) (en uso o recién "
+                                 "modificados) que se revisarán en la próxima ejecución.", nombre, len(pend))
                     break
                 if pasada == max_pasadas:
                     log.warning("[%s] Tras %d pasadas aún hubo cambios; se revisará en la próxima ejecución.",
@@ -1553,6 +1592,8 @@ def _ejecutar(args, cfg, ruta_config, base, opc, simular, o):
                 estado = f"simulación: {acciones} cambio(s) previsto(s)" if acciones else "simulación: ya está igual"
             elif acciones:
                 estado = "quedan cambios: se revisará en la próxima ejecución"
+            elif pend:
+                estado = f"OK, salvo {len(pend)} pendiente(s) en uso o recientes (próxima ejecución)"
             else:
                 estado = "OK: nube = local"
             resumen.append((nombre, remota, estado, time.time() - t_job))

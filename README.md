@@ -114,14 +114,18 @@ Al final repite la comparación y, si todo coincide, escribe `VERIFICADO: nube y
 
 | Comando | Qué hace |
 |---|---|
-| `sync_pcloud.bat` | Sincroniza. Si todo va bien, la ventana se cierra sola tras 60 s; si hay errores, se queda abierta. |
+| `sync_pcloud.bat` | Sincroniza. Al terminar, la ventana se cierra sola tras una cuenta atrás de 60 s. |
 | `sync_pcloud.bat --simular` | Solo muestra lo que haría, sin tocar la nube. |
 | `sync_pcloud.bat --auto` | Sin preguntas ni pausa (para automatizar). |
 | `sync_pcloud.bat --comparar tamano` / `sha1` | Ignora `comparar` del `config.ini` solo en esa ejecución. |
 
 Se pueden combinar: `sync_pcloud.bat --auto --comparar sha1`.
 
-Al terminar sin `--auto`, la ventana hace una cuenta atrás y se cierra sola si todo fue bien (60 s, `ESPERA_OK`) o si ya había otra ejecución en marcha (10 s, `ESPERA_OCUPADO`). Pulsar una tecla la cierra antes. Si hubo cualquier error, se queda abierta hasta pulsar una tecla, para poder leerlo. Los segundos se cambian al principio de `sync_pcloud.bat`.
+Al terminar sin `--auto`, la ventana **nunca se queda abierta**: hace una cuenta atrás y se cierra sola, haya ido bien o con errores (60 s, `ESPERA`), o a los 10 s si ya había otra ejecución en marcha (`ESPERA_OCUPADO`). Pulsar una tecla la cierra antes. Los errores quedan siempre en `sync_pcloud.log`. Los segundos se cambian al principio de `sync_pcloud.bat`.
+
+### Ficheros en uso o recién modificados
+
+Si un fichero lo tiene abierto otro programa (por ejemplo, una copia del NAS que aún se está escribiendo), Windows no deja leerlo: el programa lo marca **EN USO**, no lo sube y lo revisa en la próxima ejecución. Tampoco sube los ficheros modificados hace menos de `ignorar_recientes_min` minutos (60 por defecto), porque probablemente aún se están escribiendo. Ninguno de los dos casos cuenta como error: la carpeta termina como `OK, salvo N pendiente(s)`.
 
 ### Programador de tareas de Windows (por ejemplo, cada hora)
 
@@ -168,6 +172,7 @@ En `sync_pcloud.log` cada línea lleva su fecha. Las líneas de progreso se guar
 - **`max_borrados`**: si una pasada fuese a borrar más ficheros que ese número, aborta sin tocar nada. Se aplica a cada carpeta por separado.
 - **Carpetas de la nube solapadas o repetidas** entre secciones `[sync ...]`: no hace nada y lo explica.
 - Si una subcarpeta local no se puede leer, **no se borra** su copia en la nube.
+- Los ficheros **en uso** o **recién modificados** no se suben a medias: se dejan para la próxima ejecución.
 - Al sobrescribir un fichero, pCloud guarda la versión anterior como **revisión**.
 
 ## Códigos de salida
@@ -175,7 +180,7 @@ En `sync_pcloud.log` cada línea lleva su fecha. Las líneas de progreso se guar
 | Código | Significado |
 |---|---|
 | 0 | Todo correcto. |
-| 1 | Terminó, pero algún fichero dio error (ver `sync_pcloud.log`). |
+| 1 | Terminó, pero algún fichero dio error (ver `sync_pcloud.log`). Los ficheros en uso o recientes **no** cuentan como error. |
 | 2 | Error de configuración, de red, o falta Python. |
 | 3 | Abortado por seguridad (carpeta local inexistente o `max_borrados`). |
 | 4 | Ya había otra ejecución en marcha, o bloqueo de 10 min tras un corte. |
